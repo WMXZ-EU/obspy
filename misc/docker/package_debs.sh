@@ -6,7 +6,7 @@ LOG_DIR_ROOT=logs/package_debs
 LOG_DIR_BASE=$LOG_DIR_ROOT/$DATETIME
 mkdir -p $LOG_DIR_BASE
 
-DOCKER_IMAGES="debian_7_wheezy debian_7_wheezy_32bit debian_8_jessie debian_8_jessie_32bit ubuntu_12_04_precise ubuntu_12_04_precise_32bit ubuntu_14_04_trusty ubuntu_14_04_trusty_32bit ubuntu_16_04_xenial ubuntu_16_04_xenial_32bit ubuntu_16_10_yakkety ubuntu_16_10_yakkety_32bit"
+DOCKER_IMAGES="debian_7_wheezy debian_7_wheezy_32bit debian_7_wheezy_armhf debian_8_jessie debian_8_jessie_32bit debian_8_jessie_armhf debian_9_stretch debian_9_stretch_32bit debian_9_stretch_armhf ubuntu_14_04_trusty ubuntu_14_04_trusty_32bit ubuntu_16_04_xenial ubuntu_16_04_xenial_32bit ubuntu_17_04_zesty ubuntu_17_04_zesty_32bit ubuntu_17_10_artful ubuntu_17_10_artful_32bit"
 
 # Parse the target for deb package building (e.g. "-tmegies:deb_1.0.2")
 SET_COMMIT_STATUS=false
@@ -33,7 +33,7 @@ ls -tp $LOG_DIR_ROOT | tail -n +4 | xargs -I % rm -rf -- $LOG_DIR_ROOT/%
 OBSPY_PATH=$(dirname $(dirname $(pwd)))
 
 DOCKERFILE_FOLDER=base_images
-TEMP_PATH=temp/$RANDOM
+TEMP_PATH=temp/$RANDOM-$RANDOM-$RANDOM
 
 # Determine the docker binary name. The official debian packages use docker.io
 # for the binary's name due to some legacy docker package.
@@ -104,7 +104,7 @@ package_debs_on_image () {
     LOG_DIR=${LOG_DIR_BASE}/$image_name
     mkdir -p $LOG_DIR
     ID=$RANDOM-$RANDOM-$RANDOM
-    TAG=package_debs-$RANDOM
+    TAG=package_debs_$RANDOM-$RANDOM-$RANDOM
 
     $DOCKER build -t temp:$TAG $TEMP_PATH
 

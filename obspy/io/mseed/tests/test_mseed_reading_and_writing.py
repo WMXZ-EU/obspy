@@ -19,8 +19,8 @@ import numpy as np
 from obspy import Stream, Trace, UTCDateTime, read
 from obspy.core import AttribDict
 from obspy.core.util import CatchOutput, NamedTemporaryFile
-from obspy.io.mseed import (util, InternalMSEEDReadingWarning,
-                            InternalMSEEDReadingError)
+from obspy.io.mseed import (util, InternalMSEEDWarning,
+                            InternalMSEEDError)
 from obspy.io.mseed.core import _is_mseed, _read_mseed, _write_mseed
 from obspy.io.mseed.headers import ENCODINGS, clibmseed
 from obspy.io.mseed.msstruct import _MSStruct
@@ -136,7 +136,11 @@ class MSEEDReadingAndWritingTestCase(unittest.TestCase):
                         temp_file = tf.name
                         _write_mseed(this_stream, temp_file, encoding=encoding,
                                      byteorder=byteorder, reclen=reclen)
-                        new_stream = _read_mseed(temp_file)
+                        # some files raise "UserWarning: Record contains a
+                        # fractional seconds" - ignore
+                        with warnings.catch_warnings(record=True):
+                            warnings.simplefilter('ignore', UserWarning)
+                            new_stream = _read_mseed(temp_file)
                     # Assert the new stream still has the chosen attributes.
                     # This should mean that writing as well as reading them
                     # works.
@@ -733,7 +737,7 @@ class MSEEDReadingAndWritingTestCase(unittest.TestCase):
         of the read method. Only the data part is verified.
         """
         file = os.path.join(self.path, "data",
-                            "BW.BGLD.__.EHE.D.2008.001.first_record")
+                            "BW.BGLD.__.EHE.D.2008.001.second_record")
         # Read the data and copy them
         st = read(file)
         data_copy = st[0].data.copy()
@@ -1142,10 +1146,10 @@ class MSEEDReadingAndWritingTestCase(unittest.TestCase):
                 st = read(filename, verbose=2)
 
         self.assertEqual(len(w), 1)
-        self.assertEqual(w[0].category, InternalMSEEDReadingWarning)
+        self.assertEqual(w[0].category, InternalMSEEDWarning)
 
-        self.assertIn(b"calling msr_parse with", out.stdout)
-        self.assertIn(b"buflen=512, reclen=-1, dataflag=0, verbose=2",
+        self.assertIn("calling msr_parse with", out.stdout)
+        self.assertIn("buflen=512, reclen=-1, dataflag=0, verbose=2",
                       out.stdout)
         self.assertEqual(st[0].stats.station, 'UH3')
 
@@ -1313,8 +1317,12 @@ class MSEEDReadingAndWritingTestCase(unittest.TestCase):
         """
         def assert_valid(filename, reference, test_type):
             if test_type == "data":
+                # some files raise "UserWarning: Record contains a fractional
+                # seconds" - ignore
+                with warnings.catch_warnings():
+                    warnings.simplefilter('ignore', UserWarning)
+                    st = read(filename)
 
-                st = read(filename)
                 self.assertEqual(len(st), 1, msg=filename)
                 tr = st[0]
 
@@ -1399,17 +1407,20 @@ class MSEEDReadingAndWritingTestCase(unittest.TestCase):
                 # There is only one file that uses this so far so special
                 # handling is okay I guess.
                 self.assertIn("invalid-blockette-offset", filename)
-                with self.assertRaises(InternalMSEEDReadingError,
+                with self.assertRaises(InternalMSEEDError,
                                        msg=filename) as e:
                     # The file has a couple other issues as well and the
                     # data cannot be unpacked. Unpacking it would raises an
-                    # earlier error than the one we are testing here.
-                    read(filename, headonly=True)
+                    # earlier error than the one we are testing here
+                    # raises InternalMSEEDWarning
+                    with warnings.catch_warnings():
+                        warnings.simplefilter('ignore', InternalMSEEDWarning)
+                        read(filename, headonly=True)
 
                 with io.open(reference, "rt") as fh:
                     err_msg = fh.readlines()[-1]
                 err_msg = re.sub("^Error:\s", "", err_msg).strip()
-                self.assertEqual(err_msg, e.exception.args[0])
+                self.assertEqual(err_msg, e.exception.args[0].splitlines()[1])
             elif test_type == "summary":
                 st = read(filename)
                 # This is mainly used for a test with chunks in arbitrary
@@ -1487,6 +1498,53 @@ class MSEEDReadingAndWritingTestCase(unittest.TestCase):
 
         # Make sure 23 files have been tested.
         self.assertEqual(count, 24)
+
+    def test_per_trace_mseed_attributes(self):
+        """
+        Tests that most mseed specific attributes like record count, record
+        length and so on are set per trace and not globally.
+        """
+        # Create a concatenated tests file.
+        data_files = ["test.mseed", "two_channels.mseed",
+                      "BW.BGLD.__.EHE.D.2008.001.first_10_records"]
+        data_files = [os.path.join(self.path, "data", _i) for _i in data_files]
+
+        with io.BytesIO() as buf:
+            for d in data_files:
+                with io.open(d, "rb") as fh:
+                    buf.write(fh.read())
+            buf.seek(0, 0)
+            st = read(buf)
+
+        self.assertEqual(len(st), 4)
+        self.assertEqual(st[0].stats.mseed, {
+            'byteorder': '>',
+            'dataquality': 'R',
+            'encoding': 'STEIM2',
+            'filesize': 14336,
+            'number_of_records': 2,
+            'record_length': 4096})
+        self.assertEqual(st[1].stats.mseed, {
+            'byteorder': '>',
+            'dataquality': 'D',
+            'encoding': 'STEIM2',
+            'filesize': 14336,
+            'number_of_records': 1,
+            'record_length': 512})
+        self.assertEqual(st[2].stats.mseed, {
+            'byteorder': '>',
+            'dataquality': 'D',
+            'encoding': 'STEIM2',
+            'filesize': 14336,
+            'number_of_records': 1,
+            'record_length': 512})
+        self.assertEqual(st[3].stats.mseed, {
+            'byteorder': '>',
+            'dataquality': 'D',
+            'encoding': 'STEIM1',
+            'filesize': 14336,
+            'number_of_records': 10,
+            'record_length': 512})
 
 
 def suite():

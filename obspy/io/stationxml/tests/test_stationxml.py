@@ -93,6 +93,51 @@ class StationXMLTestCase(unittest.TestCase):
             self.assertFalse(obspy.io.stationxml.core._is_stationxml(
                 stat))
 
+    def test_different_write_levels(self):
+        """
+        Tests different levels of writing
+        """
+        filename = os.path.join(self.data_dir, "stationxml_BK.CMB.__.LKS.xml")
+        inv = obspy.read_inventory(filename)
+
+        # Write to network level
+        file_buffer = io.BytesIO()
+        inv.write(file_buffer, format="StationXML", level="network")
+        file_buffer.seek(0, 0)
+
+        network_inv = obspy.read_inventory(file_buffer)
+
+        self.assertTrue(len(network_inv.networks) == len(inv.networks))
+
+        for net in network_inv.networks:
+            self.assertTrue(len(net.stations) == 0)
+
+        # Write to station level
+        file_buffer = io.BytesIO()
+        inv.write(file_buffer, format="StationXML", level="station")
+        file_buffer.seek(0, 0)
+
+        station_inv = obspy.read_inventory(file_buffer)
+
+        for net in station_inv.networks:
+            self.assertTrue(len(net.stations) == len(inv[0].stations))
+            for sta in net.stations:
+                self.assertTrue(len(sta.channels) == 0)
+
+        # Write to channel level
+        file_buffer = io.BytesIO()
+        inv.write(file_buffer, format="StationXML", level="channel")
+        file_buffer.seek(0, 0)
+
+        channel_inv = obspy.read_inventory(file_buffer)
+
+        for net in channel_inv.networks:
+            self.assertTrue(len(net.stations) == len(inv[0].stations))
+            for sta in net.stations:
+                self.assertTrue(len(sta.channels) == len(inv[0][0].channels))
+                for cha in sta.channels:
+                    self.assertTrue(cha.response is None)
+
     def test_read_and_write_minimal_file(self):
         """
         Test that writing the most basic StationXML document possible works.
@@ -655,6 +700,22 @@ class StationXMLTestCase(unittest.TestCase):
         self.assertEqual(len(inv.networks), 1)
         self.assertEqual(inv[0].code, "XX")
 
+    def test_parse_file_with_schema_2(self):
+        """
+        Reading a StationXML file version 2.0
+        """
+        filename = os.path.join(self.data_dir, "version20.xml")
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter('always', UserWarning)
+            inv = obspy.read_inventory(filename)
+        self.assertEqual(len(w), 1)
+        self.assertTrue('StationXML file has version 2.0' in str(w[0].message))
+
+        # Very small file with almost no content.
+        self.assertEqual(len(inv.networks), 1)
+        self.assertEqual(inv[0].code, "XX")
+
     def test_numbers_are_written_to_poles_and_zeros(self):
         """
         Poles and zeros have a number attribute. Make sure this is written,
@@ -994,6 +1055,43 @@ class StationXMLTestCase(unittest.TestCase):
                 self.assertIn(line, content)
             # now, read again to test if it's parsed correctly..
             inv = obspy.read_inventory(tmpfile)
+
+    def test_reading_file_with_empty_channel_object(self):
+        """
+        Tests reading a file with an empty channel object. This is strictly
+        speaking not valid but we are forgiving.
+        """
+        filename = os.path.join(self.data_dir, "empty_channel.xml")
+        inv = obspy.read_inventory(filename)
+        self.assertEqual(
+            inv.get_contents(),
+            {'networks': ['IV'], 'stations': ['IV.LATE (Latera)'],
+             'channels': []})
+
+    def test_reading_channel_without_coordinates(self):
+        """
+        Tests reading a file with an empty channel object. This is strictly
+        speaking not valid but we are forgiving.
+        """
+        filename = os.path.join(self.data_dir,
+                                "channel_without_coordinates.xml")
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            inv = obspy.read_inventory(filename)
+
+        # Should raise a warning that it could not read the channel without
+        # coordinates.
+        self.assertEqual(len(w), 1)
+        self.assertEqual(
+            w[0].message.args[0],
+            "Channel 00.BHZ of station LATE does not have a complete set of "
+            "coordinates and thus it cannot be read. It will not be part of "
+            "the final inventory object.")
+
+        self.assertEqual(
+            inv.get_contents(),
+            {'networks': ['IV'], 'stations': ['IV.LATE (Latera)'],
+             'channels': []})
 
 
 def suite():

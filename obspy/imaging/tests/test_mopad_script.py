@@ -5,14 +5,16 @@ The obspy-mopad script test suite.
 from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
 from future.builtins import *  # NOQA
-from future import standard_library
 
 import io
 import os
 import sys
 import unittest
 from itertools import product
-with standard_library.hooks():
+
+if sys.version_info.major == 2:
+    from itertools import izip_longest as zip_longest
+else:
     from itertools import zip_longest
 
 import numpy as np
@@ -32,6 +34,17 @@ class MopadTestCase(unittest.TestCase):
         self.path = os.path.join(os.path.dirname(__file__), 'images')
         self.mt = [0.91, -0.89, -0.02, 1.78, -1.55, 0.47]
 
+    def _normalized_assert_equal(self, expected, result):
+        """
+        PY2 console uses ASCII as default encoding and writing '°' to stdout
+        raises an exception which is handled by mopad replacing it with 'deg'
+        here we normalize it across Python versions - can be removed once
+        PY2 support is dropped
+        """
+        result = result.replace('°', ' deg')
+        expected = expected.replace('°', ' deg')
+        return self.assertEqual(expected, result)
+
     #
     # obspy-mopad convert
     #
@@ -40,32 +53,17 @@ class MopadTestCase(unittest.TestCase):
         with CatchOutput() as out:
             obspy_mopad(['convert', '--fancy', '-t', 'sdr',
                          ','.join(str(x) for x in self.mt)])
-
         expected = '''
 Fault plane 1: strike =  77°, dip =  89°, slip-rake = -141°
 Fault plane 2: strike = 346°, dip =  51°, slip-rake =   -1°
 '''
-
         result = out.stdout[:-1]
-        try:
-            if sys.stdout.encoding is not None:
-                expected = expected.encode(sys.stdout.encoding)
-            else:
-                expected = expected.encode()
-        except Exception:
-            expected = expected.replace('°', ' deg')
-            if sys.stdout.encoding is not None:
-                expected = expected.encode(sys.stdout.encoding)
-            else:
-                expected = expected.encode()
-
-        self.assertEqual(expected, result)
+        self._normalized_assert_equal(expected, result)
 
     def test_script_convert_type_tensor(self):
         with CatchOutput() as out:
             obspy_mopad(['convert', '--fancy', '-t', 't',
                          ','.join(str(x) for x in self.mt)])
-
         expected = '''
    Full moment tensor in NED-coordinates:
 
@@ -74,15 +72,12 @@ Fault plane 2: strike = 346°, dip =  51°, slip-rake =   -1°
   \ -1.55  0.47 -0.02 /
 
 '''
-
-        self.assertEqual(expected.encode("utf-8"),
-                         out.stdout)
+        self.assertEqual(expected, out.stdout)
 
     def test_script_convert_type_tensor_large(self):
         with CatchOutput() as out:
             obspy_mopad(['convert', '--fancy', '-t', 't',
                          ','.join(str(x * 100) for x in self.mt)])
-
         expected = '''
    Full moment tensor in NED-coordinates:
 
@@ -91,9 +86,7 @@ Fault plane 2: strike = 346°, dip =  51°, slip-rake =   -1°
   \ -0.87  0.26 -0.01 /
 
 '''
-
-        self.assertEqual(expected.encode("utf-8"),
-                         out.stdout)
+        self.assertEqual(expected, out.stdout)
 
     def test_script_convert_basis(self):
         expected = [
@@ -134,11 +127,8 @@ Fault plane 2: strike = 346°, dip =  51°, slip-rake =   -1°
         with CatchOutput() as out:
             obspy_mopad(['convert', '-v', 'NED', 'NED',
                          ','.join(str(x) for x in self.mt)])
-
         expected = str(self.mt) + '\n'
-
-        self.assertEqual(expected.encode("utf-8"),
-                         out.stdout)
+        self.assertEqual(expected, out.stdout)
 
     #
     # obspy-mopad decompose
@@ -147,7 +137,6 @@ Fault plane 2: strike = 346°, dip =  51°, slip-rake =   -1°
     def test_script_decompose(self):
         with CatchOutput() as out:
             obspy_mopad(['decompose', '-y', ','.join(str(x) for x in self.mt)])
-
         expected = '''
 Scalar Moment: M0 = 2.61206 Nm (Mw = -5.8)
 Moment Tensor: Mnn =  0.091,  Mee = -0.089, Mdd = -0.002,
@@ -157,21 +146,8 @@ Moment Tensor: Mnn =  0.091,  Mee = -0.089, Mdd = -0.002,
 Fault plane 1: strike =  77°, dip =  89°, slip-rake = -141°
 Fault plane 2: strike = 346°, dip =  51°, slip-rake =   -1°
 '''
-
         result = out.stdout[:-1]
-        try:
-            if sys.stdout.encoding is not None:
-                expected = expected.encode(sys.stdout.encoding)
-            else:
-                expected = expected.encode()
-        except Exception:
-            expected = expected.replace('°', ' deg')
-            if sys.stdout.encoding is not None:
-                expected = expected.encode(sys.stdout.encoding)
-            else:
-                expected = expected.encode()
-
-        self.assertEqual(expected, result)
+        self._normalized_assert_equal(expected, result)
 
     #
     # obspy-mopad gmt
@@ -189,7 +165,7 @@ Fault plane 2: strike = 346°, dip =  51°, slip-rake =   -1°
 
         # Test headers
         with open(expected, 'rt') as expf:
-            bio = out.stdout.decode('utf-8')
+            bio = out.stdout
             # expf.read().splitlines() differs to expf.readlines() ?!?!?!
             for exp_line, out_line in zip_longest(expf.read().splitlines(),
                                                   bio.splitlines(),
@@ -200,7 +176,7 @@ Fault plane 2: strike = 346°, dip =  51°, slip-rake =   -1°
 
         # Test actual data
         exp_data = np.genfromtxt(expected, comments='>')
-        with io.BytesIO(out.stdout) as bio:
+        with io.BytesIO(out.stdout.encode('utf-8')) as bio:
             out_data = np.genfromtxt(bio, comments='>')
         self.assertEqual(exp_data.shape, out_data.shape,
                          msg='Data does not match!')

@@ -9,7 +9,6 @@ from future.utils import native_str
 
 import collections
 import ctypes as C
-import math
 import os
 import sys
 import warnings
@@ -710,7 +709,13 @@ def _get_record_information(file_object, offset=0, endian=None):
             encoding, word_order, record_length = \
                 unpack(native_str('%sBBB' % endian),
                        file_object.read(3))
-            if ENDIAN[word_order] != endian:
+            if word_order not in ENDIAN:
+                msg = ('Invalid word order "%s" in blockette 1000 for '
+                       'record with ID %s.%s.%s.%s at offset %i.') % (
+                    str(word_order), info["network"], info["station"],
+                    info["location"], info["channel"], offset)
+                warnings.warn(msg, UserWarning)
+            elif ENDIAN[word_order] != endian:
                 msg = 'Inconsistent word order.'
                 warnings.warn(msg, UserWarning)
             info['encoding'] = encoding
@@ -815,8 +820,8 @@ def _convert_datetime_to_mstime(dt):
 
     :param dt: obspy.util.UTCDateTime object.
     """
-    _fsec, _sec = math.modf(dt.timestamp)
-    return int(round(_fsec * HPTMODULUS)) + int(_sec * HPTMODULUS)
+    rest = (dt._ns % 10**3) >= 500 and 1 or 0
+    return dt._ns // 10**3 + rest
 
 
 def _convert_mstime_to_datetime(timestring):
@@ -825,7 +830,7 @@ def _convert_mstime_to_datetime(timestring):
 
     :param timestamp: MiniSEED timestring (Epoch time string in ms).
     """
-    return UTCDateTime(timestring / HPTMODULUS)
+    return UTCDateTime(ns=int(round(timestring * 10**3)))
 
 
 def _unpack_steim_1(data, npts, swapflag=0, verbose=0):

@@ -10,6 +10,7 @@ import os
 import shutil
 import unittest
 from os.path import abspath, dirname, join, pardir
+import warnings
 
 from obspy import read
 from obspy.core.util.base import NamedTemporaryFile
@@ -51,7 +52,7 @@ class ScanTestCase(unittest.TestCase):
                 shutil.copy(filename, os.curdir)
 
             with ImageComparison(self.path, 'scan.png') as ic:
-                obspy_scan([os.curdir] + ['--output', ic.name, '--quiet'])
+                obspy_scan([os.curdir] + ['--output', ic.name])
 
     def test_scan_function_and_scanner_class(self):
         """
@@ -107,17 +108,26 @@ class ScanTestCase(unittest.TestCase):
             for filename in self.all_files:
                 shutil.copy(filename, os.curdir)
 
-            obspy_scan([os.curdir, '--write', 'scan.npz', '--quiet'])
+            # save via command line
+            obspy_scan([os.curdir, '--write', 'scan.npz'])
+
+            # save via Python
             scanner.parse(os.curdir)
             scanner.save_npz('scanner.npz')
             scanner = Scanner()
-            scanner.load_npz('scanner.npz')
 
-            with ImageComparison(self.path, 'scan.png') as ic:
-                obspy_scan(['--load', 'scan.npz', '--output', ic.name,
-                            '--quiet'])
-        with ImageComparison(self.path, 'scan.png') as ic:
-            scanner.plot(ic.name)
+            # version string of '0.0.0+archive' raises UserWarning - ignore
+            with warnings.catch_warnings(record=True):
+                warnings.simplefilter('ignore', UserWarning)
+
+                # load via Python
+                scanner.load_npz('scanner.npz')
+                with ImageComparison(self.path, 'scan.png') as ic:
+                    scanner.plot(ic.name)
+
+                # load via command line
+                with ImageComparison(self.path, 'scan.png') as ic:
+                    obspy_scan(['--load', 'scan.npz', '--output', ic.name])
 
     def test_scan_times(self):
         """
@@ -133,8 +143,7 @@ class ScanTestCase(unittest.TestCase):
                            ['--start-time', '2004-01-01'] +
                            ['--end-time', '2004-12-31'] +
                            ['--event-time', '2004-03-14T15:09:26'] +
-                           ['--event-time', '2004-02-07T18:28:18'] +
-                           ['--quiet'])
+                           ['--event-time', '2004-02-07T18:28:18'])
 
     def test_multiple_sampling_rates(self):
         """
@@ -148,13 +157,13 @@ class ScanTestCase(unittest.TestCase):
             "TIMESERIES XX_TEST__BHZ_R, 200 samples, 200 sps, "
             "2008-01-15T00:00:02.000000, SLIST, INTEGER, Counts",
         ]
-
         files = []
-        expected_stdout_lines = [
+        expected = [
             "XX.TEST..BHZ 2008-01-15T00:00:01.000000Z "
             "2008-01-15T00:00:00.899995Z -0.100",
             "XX.TEST..BHZ 2008-01-15T00:00:01.899999Z "
-            "2008-01-15T00:00:02.000000Z 0.100"]
+            "2008-01-15T00:00:02.000000Z 0.100"
+        ]
         with NamedTemporaryFile() as f1, NamedTemporaryFile() as f2, \
                 NamedTemporaryFile() as f3:
             for i, fp in enumerate([f1, f2, f3]):
@@ -167,8 +176,7 @@ class ScanTestCase(unittest.TestCase):
                     as ic:
                 with CatchOutput() as out:
                     obspy_scan(files + ['--output', ic.name, '--print-gaps'])
-                self.assertEqual(
-                    expected_stdout_lines, out.stdout.decode().splitlines())
+                self.assertEqual(expected, out.stdout.splitlines())
 
 
 def suite():

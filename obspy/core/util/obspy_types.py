@@ -11,10 +11,8 @@ Various types used in ObsPy.
 from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
 from future.builtins import *  # NOQA
-from future import standard_library
 
-with standard_library.hooks():
-    from collections import OrderedDict
+from collections import OrderedDict
 
 try:
     import __builtin__
@@ -305,6 +303,8 @@ class FloatWithUncertaintiesAndUnit(FloatWithUncertainties):
         super(FloatWithUncertaintiesAndUnit, self).__init__(
             value, lower_uncertainty=lower_uncertainty,
             upper_uncertainty=upper_uncertainty)
+        if unit is None and hasattr(value, "unit"):
+            unit = value.unit
         self.unit = unit
 
     @property
@@ -454,6 +454,10 @@ class ComplexWithUncertainties(CustomComplex):
 
 
 class ObsPyException(Exception):
+    pass
+
+
+class ObsPyReadingError(ObsPyException):
     pass
 
 

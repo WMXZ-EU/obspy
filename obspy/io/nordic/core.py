@@ -32,7 +32,7 @@ import io
 from obspy import UTCDateTime, read
 from obspy.geodetics import kilometers2degrees, degrees2kilometers
 from obspy.core.event import Event, Origin, Magnitude, Comment, Catalog
-from obspy.core.event import EventDescription, CreationInfo
+from obspy.core.event import EventDescription, CreationInfo, OriginQuality
 from obspy.core.event import Pick, WaveformStreamID, Arrival, Amplitude
 
 
@@ -181,11 +181,11 @@ def _evmagtonor(mag_type):
     """
     Switch from obspy event magnitude types to seisan syntax.
 
-    >>> print(_evmagtonor('mB'))
+    >>> print(_evmagtonor('mB'))  # doctest: +SKIP
     B
-    >>> print(_evmagtonor('M'))
+    >>> print(_evmagtonor('M'))  # doctest: +SKIP
     W
-    >>> print(_evmagtonor('bob'))
+    >>> print(_evmagtonor('bob'))  # doctest: +SKIP
     <BLANKLINE>
     """
     if mag_type == 'M':
@@ -204,9 +204,9 @@ def _nortoevmag(mag_type):
     """
     Switch from nordic type magnitude notation to obspy event magnitudes.
 
-    >>> print(_nortoevmag('b'))
+    >>> print(_nortoevmag('b'))  # doctest: +SKIP
     mB
-    >>> print(_nortoevmag('bob'))
+    >>> print(_nortoevmag('bob'))  # doctest: +SKIP
     <BLANKLINE>
     """
     if mag_type.upper() == "L":
@@ -287,8 +287,8 @@ def _readheader(f):
     ksta = Comment(text='Number of stations=' + topline[49:51].strip())
     new_event.origins[0].comments.append(ksta)
     if _float_conv(topline[51:55]) is not None:
-        new_event.origins[0].time_errors['Time_Residual_RMS'] = \
-            _float_conv(topline[51:55])
+        new_event.origins[0].quality = OriginQuality(
+            standard_error=_float_conv(topline[51:55]))
     # Read in magnitudes if they are there.
     for index in [59, 67, 75]:
         if not topline[index].isspace():
@@ -488,11 +488,11 @@ def _read_picks(f, new_event):
     pickline = []
     # Set a default, ignored later unless overwritten
     snr = None
-    for lineno, line in enumerate(f):
+    for line in f:
         if line[79] == '7':
             header = line
             break
-    for lineno, line in enumerate(f):
+    for line in f:
         if len(line.rstrip('\n').rstrip('\r')) in [80, 79] and \
            line[79] in ' 4\n':
             pickline += [line]
@@ -756,7 +756,7 @@ def write_select(catalog, filename, userid='OBSP', evtype='L',
          way as the events in the catalog.
     """
     if not wavefiles:
-        wavefiles = ['DUMMY' for i in range(len(catalog))]
+        wavefiles = ['DUMMY' for _i in range(len(catalog))]
     with open(filename, 'w') as fout:
         for event, wavfile in zip(catalog, wavefiles):
             select = io.StringIO()
@@ -892,12 +892,8 @@ def _write_nordic(event, filename, userid='OBSP', evtype='L', outdir='.',
     if len(agency) > 3:
         agency = agency[0:3]
     # Cope with differences in event uncertainty naming
-    if event.origins[0].time_errors:
-        try:
-            timerms = '{0:.1f}'.format(event.origins[0].
-                                       time_errors.Time_Residual_RMS)
-        except AttributeError:
-            timerms = '0.0'
+    if event.origins[0].quality and event.origins[0].quality['standard_error']:
+        timerms = '{0:.1f}'.format(event.origins[0].quality['standard_error'])
     else:
         timerms = '0.0'
     conv_mags = []

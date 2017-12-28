@@ -43,10 +43,13 @@ from obspy.core.trace import Trace  # NOQA
 from obspy.core.stream import Stream, read
 from obspy.core.event import read_events, Catalog
 from obspy.core.inventory import read_inventory, Inventory  # NOQA
+from obspy.core.util.obspy_types import (  # NOQA
+    ObsPyException, ObsPyReadingError)
 
 
 __all__ = ["UTCDateTime", "Trace", "__version__", "Stream", "read",
-           "read_events", "Catalog", "read_inventory"]
+           "read_events", "Catalog", "read_inventory", "ObsPyException",
+           "ObsPyReadingError"]
 __all__ = [native_str(i) for i in __all__]
 
 
@@ -57,6 +60,9 @@ read.__doc__ = \
 read_events.__doc__ = \
     read_events.__doc__ % make_format_plugin_table("event", "read",
                                                    numspaces=4)
+read_inventory.__doc__ = \
+    read_inventory.__doc__ % make_format_plugin_table("inventory", "read",
+                                                      numspaces=4)
 
 
 if PY2:
@@ -66,6 +72,9 @@ if PY2:
     Catalog.write.im_func.func_doc = \
         Catalog.write.__doc__ % make_format_plugin_table("event", "write",
                                                          numspaces=8)
+    Inventory.write.im_func.func_doc = \
+        Inventory.write.__doc__ % make_format_plugin_table(
+            "inventory", "write", numspaces=8)
 else:
     Stream.write.__doc__ = \
         Stream.write.__doc__ % make_format_plugin_table("waveform", "write",
@@ -73,6 +82,9 @@ else:
     Catalog.write.__doc__ = \
         Catalog.write.__doc__ % make_format_plugin_table("event", "write",
                                                          numspaces=8)
+    Inventory.write.__doc__ = \
+        Inventory.write.__doc__ % make_format_plugin_table(
+            "inventory", "write", numspaces=8)
 
 
 if requests.__version__ in ('2.12.0', '2.12.1', '2.12.2'):

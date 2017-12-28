@@ -11,9 +11,9 @@ import random
 import shutil
 import sys
 import unittest
-import warnings
 from datetime import datetime
 from struct import pack, unpack
+import warnings
 
 import numpy as np
 
@@ -124,15 +124,41 @@ class MSEEDUtilTestCase(unittest.TestCase):
             self.assertEqual(
                 ts * 1000000, util._convert_datetime_to_mstime(dt))
         # Additional sanity tests.
-        # Today.
-        now = UTCDateTime()
-        self.assertEqual(now, util._convert_mstime_to_datetime(
-            util._convert_datetime_to_mstime(now)))
+        # Random date that previously failed.
+        dt = UTCDateTime(2017, 3, 6, 4, 12, 16, 260696)
+        self.assertEqual(dt, util._convert_mstime_to_datetime(
+            util._convert_datetime_to_mstime(dt)))
         # Some random date.
         random.seed(815)  # make test reproducible
         timestring = random.randint(0, 2000000) * 1e6
         self.assertEqual(timestring, util._convert_datetime_to_mstime(
             util._convert_mstime_to_datetime(timestring)))
+
+    def test_convert_datetime2(self):
+        """
+        Some failing test discovered in #1670
+        """
+        # 1
+        dt = UTCDateTime(ns=1487021451935737333)
+        self.assertEqual(str(dt), "2017-02-13T21:30:51.935737Z")
+        self.assertEqual(util._convert_datetime_to_mstime(dt),
+                         1487021451935737)
+        self.assertEqual(dt, util._convert_mstime_to_datetime(
+            util._convert_datetime_to_mstime(dt)))
+        # 2
+        dt = UTCDateTime(ns=1487021451935736449)
+        self.assertEqual(str(dt), "2017-02-13T21:30:51.935736Z")
+        self.assertEqual(util._convert_datetime_to_mstime(dt),
+                         1487021451935736)
+        self.assertEqual(dt, util._convert_mstime_to_datetime(
+            util._convert_datetime_to_mstime(dt)))
+        # 3
+        dt = UTCDateTime(ns=1487021451935736501)
+        self.assertEqual(str(dt), "2017-02-13T21:30:51.935737Z")
+        self.assertEqual(util._convert_datetime_to_mstime(dt),
+                         1487021451935737)
+        self.assertEqual(dt, util._convert_mstime_to_datetime(
+            util._convert_datetime_to_mstime(dt)))
 
     def test_get_record_information(self):
         """
@@ -1095,19 +1121,46 @@ class MSEEDUtilTestCase(unittest.TestCase):
             tf.close()
             shutil.copy(os.path.join(self.path, 'data', 'test.mseed'),
                         tf.name)
-            # No flags set.
-            flags = util.get_timing_and_data_quality(tf.name)
-            self.assertEqual(flags["data_quality_flags"], [0] * 8)
-            # Set flags.
+            # No data quality flags set.
+            flags = util.get_flags(tf.name)['data_quality_flags_counts']
+            self.assertEqual(max(flags.values()), 0)
+            # Set  data quality flags.
             util.set_flags_in_fixed_headers(tf.name, {
                 "NL.HGN.00.BHZ": {"data_qual_flags": {
                     'glitches_detected': True,
                     'time_tag_questionable': True}}})
             # Flags are set now.
-            flags = util.get_timing_and_data_quality(tf.name)
+            flags = util.get_flags(tf.name)['data_quality_flags_counts']
             # 2 because file contains two records.
-            self.assertEqual(flags["data_quality_flags"],
-                             [0, 0, 0, 2, 0, 0, 0, 2])
+            self.assertEqual(sum(flags.values()), 4)
+            self.assertEqual(flags['glitches'], 2)
+            self.assertEqual(flags['suspect_time_tag'], 2)
+
+    def test_regression_segfault_when_hooking_up_libmseeds_logging(self):
+        filename = os.path.join(self.path, 'data',
+                                'wrong_blockette_numbers_specified.mseed')
+        # Read it once - that hooks up the logging.
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            _read_mseed(filename)
+        self.assertTrue(len(w), 1)
+        self.assertEqual(
+            w[0].message.args[0],
+            "SK_MODS__HHZ_D: Warning: Number of blockettes in fixed header "
+            "(2) does not match the number parsed (1)")
+        # The hooks used to still be set up in libmseed but the
+        # corresponding Python function have been garbage collected which
+        # caused a segfault.
+        #
+        # This test passes if there is no seg-fault.
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            util.get_flags(filename)
+        self.assertTrue(len(w), 1)
+        self.assertEqual(
+            w[0].message.args[0],
+            "SK_MODS__HHZ_D: Warning: Number of blockettes in fixed header "
+            "(2) does not match the number parsed (1)")
 
     def _check_values(self, file_bfr, trace_id, record_numbers, expected_bytes,
                       reclen):
@@ -1179,6 +1232,37 @@ class MSEEDUtilTestCase(unittest.TestCase):
 
         # Move the file_bfr to where it was before
         file_bfr.seek(prev_pos, os.SEEK_SET)
+
+    def test_get_record_information_with_invalid_word_order(self):
+        filename = os.path.join(self.path, "data",
+                                "record_with_invalid_word_order.mseed")
+        with warnings.catch_warnings(record=True) as w:
+            info = util.get_record_information(filename)
+
+        self.assertEqual(len(w), 1)
+        self.assertEqual(
+            w[0].message.args[0],
+            'Invalid word order "95" in blockette 1000 for record with '
+            'ID IU.COR..LHZ at offset 0.')
+        self.assertEqual(info, {
+            'filesize': 4096,
+            'station': 'COR',
+            'location': '',
+            'channel': 'LHZ',
+            'network': 'IU',
+            'npts': 1267,
+            'activity_flags': 64,
+            'io_and_clock_flags': 32,
+            'data_quality_flags': 0,
+            'time_correction': 0,
+            'encoding': 11,
+            'record_length': 4096,
+            'samp_rate': 1.0,
+            'starttime': UTCDateTime(1995, 6, 24, 0, 0, 0, 265000),
+            'endtime': UTCDateTime(1995, 6, 24, 0, 21, 6, 265000),
+            'byteorder': '>',
+            'number_of_records': 1,
+            'excess_bytes': 0})
 
 
 def suite():

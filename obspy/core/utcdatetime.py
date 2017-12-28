@@ -136,6 +136,9 @@ class UTCDateTime(object):
         >>> UTCDateTime("20110818_03:00:00")
         UTCDateTime(2011, 8, 18, 3, 0)
 
+        >>> UTCDateTime("1970/01/17 12:23:34")
+        UTCDateTime(1970, 1, 17, 12, 23, 34)
+
     (4) Using multiple arguments in the following order: `year, month,
         day[, hour[, minute[, second[, microsecond]]]`. The year, month and day
         arguments are required.
@@ -228,7 +231,26 @@ class UTCDateTime(object):
         elif len(args) == 1 and len(kwargs) == 0:
             value = args[0]
             if isinstance(value, UTCDateTime):
-                self._ns = value._ns
+                # ugly workaround to be able to unpickle UTCDateTime objects
+                # that were pickled on ObsPy <1.1
+                try:
+                    self._ns = value._ns
+                except AttributeError:
+                    # work around floating point accuracy/rounding issue on
+                    # Py3.3, see
+                    # https://travis-ci.org/obspy/obspy/jobs/208941376#L751
+                    # timestamp is 1251073203.0399999618 so when converting to
+                    # integer nanosecond based UTCDateTime this should be
+                    # rounded to 1251073203040000 nanoseconds.. but on Py3.3 it
+                    # ends up as 1251073203039999, so we manually set
+                    # microseconds with correct rounding without artifacts from
+                    # floating point precision. see #1664
+                    timestamp_seconds = int(value.__dict__['timestamp'])
+                    timestamp_microseconds = round(
+                        (value.__dict__['timestamp'] % 1.0) * 1e6)
+                    dt_ = datetime.datetime.utcfromtimestamp(timestamp_seconds)
+                    dt_ = dt_.replace(microsecond=timestamp_microseconds)
+                    self._from_datetime(dt_)
                 return
             # check types
             try:
@@ -265,6 +287,7 @@ class UTCDateTime(object):
                 value = value.replace('-', ' ')
                 value = value.replace(':', ' ')
                 value = value.replace(',', ' ')
+                value = value.replace('/', ' ')
                 value = value.replace('Z', ' ')
                 value = value.replace('W', ' ')
                 # check for ordinal date (julian date)
@@ -941,7 +964,7 @@ class UTCDateTime(object):
             dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second,
             ns[2:self.precision + 2])
 
-    def _repr_pretty_(self, p, cycle):
+    def _repr_pretty_(self, p, cycle):  # @UnusedVariable
         p.text(str(self))
 
     def __unicode__(self):
@@ -983,10 +1006,13 @@ class UTCDateTime(object):
         >>> t1 == t2
         False
         """
-        try:
+        if isinstance(other, UTCDateTime):
+            return round((self._ns - other._ns) / 1e9, self.__precision) == 0
+        elif isinstance(other, float) or isinstance(other, int):
             return round(self.timestamp - float(other), self.__precision) == 0
-        except (TypeError, ValueError):
-            return False
+        elif isinstance(other, datetime.datetime):
+            return self.datetime == other
+        return False
 
     def __ne__(self, other):
         """
@@ -1040,10 +1066,13 @@ class UTCDateTime(object):
         >>> t1 < t2
         True
         """
-        try:
+        if isinstance(other, UTCDateTime):
+            return round((self._ns - other._ns) / 1e9, self.__precision) < 0
+        elif isinstance(other, float) or isinstance(other, int):
             return round(self.timestamp - float(other), self.__precision) < 0
-        except (TypeError, ValueError):
-            return False
+        elif isinstance(other, datetime.datetime):
+            return self.datetime < other
+        return False
 
     def __le__(self, other):
         """
@@ -1070,10 +1099,13 @@ class UTCDateTime(object):
         >>> t1 <= t2
         False
         """
-        try:
+        if isinstance(other, UTCDateTime):
+            return round((self._ns - other._ns) / 1e9, self.__precision) <= 0
+        elif isinstance(other, float) or isinstance(other, int):
             return round(self.timestamp - float(other), self.__precision) <= 0
-        except (TypeError, ValueError):
-            return False
+        elif isinstance(other, datetime.datetime):
+            return self.datetime <= other
+        return False
 
     def __gt__(self, other):
         """
@@ -1100,10 +1132,13 @@ class UTCDateTime(object):
         >>> t1 > t2
         True
         """
-        try:
+        if isinstance(other, UTCDateTime):
+            return round((self._ns - other._ns) / 1e9, self.__precision) > 0
+        elif isinstance(other, float) or isinstance(other, int):
             return round(self.timestamp - float(other), self.__precision) > 0
-        except (TypeError, ValueError):
-            return False
+        elif isinstance(other, datetime.datetime):
+            return self.datetime > other
+        return False
 
     def __ge__(self, other):
         """
@@ -1130,10 +1165,13 @@ class UTCDateTime(object):
         >>> t1 >= t2
         False
         """
-        try:
+        if isinstance(other, UTCDateTime):
+            return round((self._ns - other._ns) / 1e9, self.__precision) >= 0
+        elif isinstance(other, float) or isinstance(other, int):
             return round(self.timestamp - float(other), self.__precision) >= 0
-        except (TypeError, ValueError):
-            return False
+        elif isinstance(other, datetime.datetime):
+            return self.datetime >= other
+        return False
 
     def __repr__(self):
         """

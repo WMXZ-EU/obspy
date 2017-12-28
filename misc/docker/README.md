@@ -188,18 +188,123 @@ used. To create an Ubuntu docker base image:
 ```bash
 $ cd /tmp
 $ sudo aptitude install ubuntu-archive-keyring
-$ sudo debootstrap --arch=i386 --variant=minbase --components=main,universe --keyring=/usr/share/keyrings/ubuntu-archive-keyring.gpg xenial ubuntu_16_04_xenial_32bit http://archive.ubuntu.com/ubuntu 2>&1 | tee ubuntu_16_04_xenial_32bit.debootstrap.log
-$ sudo tar -C ubuntu_16_04_xenial_32bit -c . | docker import - obspy/base-images:ubuntu_16_04_xenial_32bit
+$ DISTRO=xenial
+$ DISTRO_FULL=ubuntu_16_04_xenial_32bit
+$ sudo debootstrap --arch=i386 --variant=minbase --components=main,universe --keyring=/usr/share/keyrings/ubuntu-archive-keyring.gpg ${DISTRO} ${DISTRO_FULL} http://archive.ubuntu.com/ubuntu 2>&1 | tee ${DISTRO_FULL}.debootstrap.log
+$ sudo tar -C ${DISTRO_FULL} -c . | docker import - obspy/base-images:${DISTRO_FULL}
 $ docker login  # docker hub user needs write access to "obspy/base-images" of organization "obspy"
-$ docker push obspy/base-images:ubuntu_16_04_xenial_32bit
+$ docker push obspy/base-images:${DISTRO_FULL}
 ```
 
 To create a Debian docker base image:
 
 ```bash
 $ cd /tmp
-$ sudo debootstrap --arch=i386 --variant=minbase jessie debian_8_jessie_32bit http://httpredir.debian.org/debian/ 2>&1 | tee debian_8_jessie_32bit.debootstrap.log
-$ sudo tar -C debian_8_jessie_32bit -c . | docker import - obspy/base-images:debian_8_jessie_32bit
+$ DISTRO=jessie
+$ DISTRO_FULL=debian_8_jessie_32bit
+$ sudo debootstrap --arch=i386 --variant=minbase ${DISTRO} ${DISTRO_FULL} http://httpredir.debian.org/debian/ 2>&1 | tee ${DISTRO_FULL}.debootstrap.log
+$ sudo tar -C ${DISTRO_FULL} -c . | docker import - obspy/base-images:${DISTRO_FULL}
 $ docker login  # docker hub user needs write access to "obspy/base-images" of organization "obspy"
-$ docker push obspy/base-images:debian_8_jessie_32bit
+$ docker push obspy/base-images:${DISTRO_FULL}
 ```
+
+To create a Raspbian (Debian ``armhf`` for Raspberry Pi) docker base image (using ``qemu``, https://wiki.debian.org/ArmHardFloatChroot).
+This imports the public key for the Raspbian repository at the start, so the package integrity can be verified later on.
+
+```bash
+$ cd /tmp
+$ wget https://archive.raspbian.org/raspbian.public.key -O - | sudo gpg --import -
+$ DISTRO=stretch
+$ DISTRO_FULL=debian_9_stretch_armhf
+$ sudo qemu-debootstrap --arch=armhf --keyring /root/.gnupg/pubring.gpg ${DISTRO} ${DISTRO_FULL} http://archive.raspbian.org/raspbian 2>&1 | tee ${DISTRO_FULL}.debootstrap.log
+$ sudo tar -C ${DISTRO_FULL} -c . | docker import - obspy/base-images:${DISTRO_FULL}
+$ docker login  # docker hub user needs write access to "obspy/base-images" of organization "obspy"
+$ docker push obspy/base-images:${DISTRO_FULL}
+```
+
+### Setting up `docker-testbot` to automatically test PRs and branches and send commit statuses
+
+##### Install docker
+
+Well.. install it: https://docs.docker.com/engine/installation/
+
+##### Set up a dedicated Python environment
+
+Set up a dedicated Anaconda Python environment and install
+[`obspy_github_api`](https://github.com/obspy/obspy_github_api). Activate that
+environment before running the docker testbot (in the last step of the
+instructions).
+
+##### Set up a dedicated ObsPy clone
+
+Set up a dedicated ObsPy git clone. This clone should not be used for anything
+else than running the docker testbot. `git clean -fdx` will be run, razing any
+local changes. Set the location to the dedicated obspy repository:
+
+```bash
+$ export OBSPY_DOCKER_BASE=/path/to/dedicated/obspy
+```
+
+Remote 'origin' should point to obspy/obspy (obspy main repository).
+
+##### Register an OAuth token on github
+
+Login to https://github.com and create a dedicated OAuth token. It should only
+have rights for "repo:status" on obspy/obspy. Set token as env variable:
+
+```bash
+$ export OBSPY_COMMIT_STATUS_TOKEN=abcdefgh123456789
+```
+
+##### Run docker testbot
+
+To run docker testbot, simply do:
+
+```bash
+$ bash cronjob_docker_tests.sh -t -d -b -p
+```
+
+This will run both..
+
+ - docker testing (-t)
+ - docker deb packaging/testing  (-d)
+
+..on both:
+
+ - main branches, like master and maintenance_1.0.x (-b)
+ - pull requests (-p)
+
+Since runtime is rather high, ideally these jobs should be distributed on
+separate docker testrunners (scripts might have to be adjusted, e.g. naming of
+docker temporary containers..)
+
+To run four workers embarassingly parallel (by separating the different build
+types), set up four dedicated obspy github repository clones and run the jobs
+in parallel:
+
+```bash
+$ git clone git://github.com/obspy/obspy /path/to/obspy/dockers/test-pr
+$ git clone git://github.com/obspy/obspy /path/to/obspy/dockers/test-branches
+$ git clone git://github.com/obspy/obspy /path/to/obspy/dockers/deb-pr
+$ git clone git://github.com/obspy/obspy /path/to/obspy/dockers/deb-branches
+$ OBSPY_DOCKER_BASE=/path/to/obspy/dockers/test-pr ./cronjob_docker_tests.sh -t -p &
+$ OBSPY_DOCKER_BASE=/path/to/obspy/dockers/test-branches ./cronjob_docker_tests.sh -t -b &
+$ OBSPY_DOCKER_BASE=/path/to/obspy/dockers/deb-pr ./cronjob_docker_tests.sh -d -p &
+$ OBSPY_DOCKER_BASE=/path/to/obspy/dockers/deb-branches ./cronjob_docker_tests.sh -d -b &
+```
+
+# Release Lifecycle Information
+
+ * Debian: https://wiki.debian.org/DebianReleases#Production_Releases
+ * Ubuntu: https://wiki.ubuntu.com/Releases#Current
+ * openSUSE: https://en.opensuse.org/Lifetime#Maintained_Regular_distributions
+ * CentOS: https://en.wikipedia.org/wiki/CentOS#End-of-support_schedule
+ * Fedora: https://fedoraproject.org/wiki/Releases#Current_Supported_Releases
+
+# Lookup available packages:
+
+ * Debian: https://www.debian.org/distrib/packages
+ * Ubuntu: https://packages.ubuntu.com/
+ * openSUSE: https://software.opensuse.org/find
+ * CentOS: http://mirror.centos.org/centos/7/os/x86_64/Packages/
+ * Fedora: https://fedoraproject.org/wiki/Releases#Current_Supported_Release://admin.fedoraproject.org/pkgdb/packages/

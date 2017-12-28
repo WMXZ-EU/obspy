@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-obspy.io.mseed - MiniSEED read and write support
-================================================
+obspy.io.mseed - MiniSEED read and write support for ObsPy
+==========================================================
 This module provides read and write support for the `MiniSEED
 <https://ds.iris.edu/ds/nodes/dmc/data/formats/#miniseed>`_ (and the
 data part of full SEED) waveform data format and some other convenient
@@ -145,13 +145,35 @@ from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
 from future.builtins import *  # NOQA
 
+from obspy import ObsPyException, ObsPyReadingError
 
-class InternalMSEEDReadingError(Exception):
+
+class ObsPyMSEEDError(ObsPyException):
     pass
 
 
-class InternalMSEEDReadingWarning(UserWarning):
+class ObsPyMSEEDReadingError(ObsPyMSEEDError, ObsPyReadingError):
     pass
+
+
+class InternalMSEEDError(ObsPyMSEEDError):
+    pass
+
+
+class InternalMSEEDWarning(UserWarning):
+    pass
+
+
+class ObsPyMSEEDFilesizeTooSmallError(ObsPyMSEEDReadingError):
+    pass
+
+
+class ObsPyMSEEDFilesizeTooLargeError(ObsPyMSEEDReadingError):
+    pass
+
+
+__all__ = ['InternalMSEEDError', 'InternalMSEEDWarning', 'ObsPyMSEEDError',
+           'ObsPyMSEEDFilesizeTooSmallError']
 
 
 if __name__ == '__main__':

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
-from future.builtins import *  # NOQA
+from future.builtins import *  # NOQA @UnusedWildImport
 
 import copy
 import os
@@ -11,7 +11,6 @@ import warnings
 import tempfile
 
 from matplotlib import rcParams
-
 import numpy as np
 
 from obspy.core.event import (Catalog, Comment, CreationInfo, Event, Origin,
@@ -19,13 +18,11 @@ from obspy.core.event import (Catalog, Comment, CreationInfo, Event, Origin,
                               read_events, Magnitude, FocalMechanism, Arrival)
 from obspy.core.event.source import farfield
 from obspy.core.utcdatetime import UTCDateTime
-from obspy.core.util.base import get_basemap_version, get_cartopy_version
+from obspy.core.util import BASEMAP_VERSION, CARTOPY_VERSION
 from obspy.core.util.testing import ImageComparison
 from obspy.core.event.base import QuantityError
 
-BASEMAP_VERSION = get_basemap_version()
 
-CARTOPY_VERSION = get_cartopy_version()
 if CARTOPY_VERSION and CARTOPY_VERSION >= [0, 12, 0]:
     HAS_CARTOPY = True
 else:
@@ -178,7 +175,7 @@ class EventTestCase(unittest.TestCase):
                         -1.13501984, 0.873480164], [0, 0, -0, 0, -0, 0],
                         [2.245, 0.655304008, 0.504304008, -2.245,
                          -0.655304008, -0.504304008]])
-        np.testing.assert_allclose(result, ref)
+        np.testing.assert_allclose(result, ref, rtol=1e-5, atol=1e-8)
 
 
 class OriginTestCase(unittest.TestCase):
@@ -516,7 +513,10 @@ class CatalogTestCase(unittest.TestCase):
         rid = ResourceIdentifier(new_id)
         self.assertIs(rid.get_referred_object(), cat3[0])
         del cat3
-        self.assertIs(rid.get_referred_object(), cat2[0])
+        # raises UserWarning
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            self.assertIs(rid.get_referred_object(), cat2[0])
         del cat2
         self.assertIs(rid.get_referred_object(), None)
 
@@ -554,7 +554,8 @@ class CatalogBasemapTestCase(unittest.TestCase):
         parameters, using Basemap.
         """
         cat = read_events()
-        with ImageComparison(self.image_dir, 'catalog-basemap2.png') as ic:
+        with ImageComparison(self.image_dir, 'catalog-basemap2.png',
+                             reltol=1.3) as ic:
             rcParams['savefig.dpi'] = 72
             cat.plot(method='basemap', outfile=ic.name, projection='ortho',
                      resolution='c', water_fill_color='#98b7e2', label=None,
@@ -567,8 +568,8 @@ class CatalogBasemapTestCase(unittest.TestCase):
         computed in a circular fashion.
         """
         cat = read_events('/path/to/events_longitude_wrap.zmap', format='ZMAP')
-        with ImageComparison(self.image_dir,
-                             'catalog-basemap_long-wrap.png') as ic:
+        with ImageComparison(self.image_dir, 'catalog-basemap_long-wrap.png',
+                             reltol=1.1) as ic:
             rcParams['savefig.dpi'] = 40
             cat.plot(method='basemap', outfile=ic.name, projection='ortho',
                      resolution='c', label=None, title='', colorbar=False,
@@ -589,7 +590,7 @@ class CatalogBasemapTestCase(unittest.TestCase):
                              reltol=reltol) as ic:
             rcParams['savefig.dpi'] = 72
             cat.plot(method='basemap', outfile=ic.name, projection='local',
-                     resolution='i', continent_fill_color='0.3',
+                     resolution='l', continent_fill_color='0.3',
                      color='date', colormap='gist_heat')
 
 
@@ -775,7 +776,10 @@ class ResourceIdentifierTestCase(unittest.TestCase):
         # reference will result in a dict that contains None, but that will
         # get removed when the resource_id goes out of scope
         _r2 = ResourceIdentifier(referred_object=UTCDateTime())  # NOQA
-        self.assertEqual(_r2.get_referred_object(), None)
+        # raises UserWarning
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            self.assertEqual(_r2.get_referred_object(), None)
         del _r2  # delete rid to get its id out of r_dict keys
         # Give it a reference and it will stick around.
         obj = UTCDateTime()
@@ -813,7 +817,10 @@ class ResourceIdentifierTestCase(unittest.TestCase):
         rid1 = ResourceIdentifier(referred_object=obj1)
         # delete obj1, make sure rid1 return None
         del obj1
-        self.assertIs(rid1.get_referred_object(), None)
+        # raises UserWarning
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            self.assertIs(rid1.get_referred_object(), None)
 
     def test_getting_gc_with_shared_resource_id(self):
         """
@@ -855,8 +862,11 @@ class ResourceIdentifierTestCase(unittest.TestCase):
         rdict = ResourceIdentifier._ResourceIdentifier__resource_id_weak_dict
         self.assertEqual(len(list(rdict.keys())), 2)
         del obj_a, obj_b
-        self.assertIs(res1.get_referred_object(), None)
-        self.assertIs(res2.get_referred_object(), None)
+        # raises UserWarnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            self.assertIs(res1.get_referred_object(), None)
+            self.assertIs(res2.get_referred_object(), None)
 
     def test_quakeml_regex(self):
         """
@@ -974,6 +984,25 @@ class ResourceIdentifierTestCase(unittest.TestCase):
         rid3 = ResourceIdentifier(rid)
         self.assertEqual(rid, rid2)
         self.assertEqual(rid, rid3)
+
+    def test_error_message_for_failing_quakeml_id_conversion(self):
+        """
+        Converting an id to a QuakeML compatible id might fail. Test the
+        error message.
+        """
+        invalid_id = "http://example.org"
+        rid = ResourceIdentifier(invalid_id)
+        with self.assertRaises(ValueError) as e:
+            rid.get_quakeml_uri()
+        self.assertEqual(
+            e.exception.args[0],
+            "The id 'http://example.org' is not a valid QuakeML resource "
+            "identifier. ObsPy tried modifying it to "
+            "'smi:local/http://example.org' but it is still not valid. Please "
+            "make sure all resource ids are either valid or can be made valid "
+            "by prefixing them with 'smi:<authority_id>/'. Valid ids are "
+            "specified in the QuakeML manual section 3.1 and in particular "
+            "exclude colons for the final part.")
 
 
 class ResourceIDEventScopeTestCase(unittest.TestCase):
@@ -1104,6 +1133,22 @@ class BaseTestCase(unittest.TestCase):
             e.exception.args[0],
             "On Origin object: Value '-inf' for 'latitude' is "
             "not a finite floating point value.")
+
+    def test_resource_ids_refer_to_newest_object(self):
+        """
+        Tests that resource ids which are assigned multiple times but point to
+        identical objects always point to the newest object. This prevents some
+        odd behaviour.
+        """
+        t1 = UTCDateTime(2010, 1, 1)
+        t2 = UTCDateTime(2010, 1, 1)
+
+        rid = ResourceIdentifier("a", referred_object=t1)  # @UnusedVariable
+        rid = ResourceIdentifier("a", referred_object=t2)
+
+        del t1
+
+        self.assertEqual(rid.get_referred_object(), t2)
 
 
 def suite():

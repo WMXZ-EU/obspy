@@ -13,8 +13,7 @@ from __future__ import (absolute_import, division, print_function,
 from future.builtins import *  # NOQA @UnusedWildImport
 from future.utils import native_str
 
-import re
-import sys
+import warnings
 
 from obspy import UTCDateTime
 
@@ -26,6 +25,10 @@ IGNORE_ATTR = ['blockette_id', 'blockette_name', 'compact', 'debug',
 
 
 class SEEDParserException(Exception):
+    pass
+
+
+class SEEDAbbreviationNotFoundWarning(UserWarning):
     pass
 
 
@@ -107,7 +110,7 @@ def compare_seed(seed1, seed2):
     if seed1[15:19] == b'02.3':
         seed1 = seed1.replace(b'02.3', b' 2.4', 1)
     # check for missing '~' in blockette 10 (faulty dataless from BW network)
-    l = int(seed1[11:15])
+    l = int(seed1[11:15])   # NOQA
     temp = seed1[0:(l + 8)]
     if temp.count(b'~') == 4:
         # added a '~' and remove a space before the next record
@@ -166,8 +169,8 @@ def blockette_34_lookup(abbr, lookup):
                          lookup)
         return l1 + ' - ' + l2
     except Exception:
-        msg = '\nWarning: Abbreviation reference not found.'
-        sys.stdout.write(msg)
+        msg = 'Warning: Abbreviation reference for "%i" not found.' % lookup
+        warnings.warn(msg, SEEDAbbreviationNotFoundWarning)
         return 'No Abbreviation Referenced'
 
 
@@ -220,38 +223,3 @@ def unique_list(seq):
     for e in seq:
         keys[e] = 1
     return list(keys.keys())
-
-
-def is_resp(filename):
-    """
-    Check if a file at the specified location appears to be a RESP file.
-
-    :type filename: str
-    :param filename: Path/filename of a local file to be checked.
-    :rtype: bool
-    :returns: `True` if file seems to be a RESP file, `False` otherwise.
-    """
-    try:
-        with open(filename, "rb") as fh:
-            try:
-                # lookup the first line that does not start with a hash sign
-                while True:
-                    # use splitlines to correctly detect e.g. mac formatted
-                    # files on Linux
-                    lines = fh.readline().splitlines()
-                    # end of file without finding an appropriate line
-                    if not lines:
-                        return False
-                    # check each line after splitting them
-                    for line in lines:
-                        if line.decode().startswith("#"):
-                            continue
-                        # do the regex check on the first non-comment line
-                        if re.match(r'[bB]0[1-6][0-9]F[0-9]{2} ',
-                                    line.decode()):
-                            return True
-                        return False
-            except UnicodeDecodeError:
-                return False
-    except IOError:
-        return False

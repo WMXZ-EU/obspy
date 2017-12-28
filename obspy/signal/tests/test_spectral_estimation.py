@@ -101,6 +101,15 @@ class PsdTestCase(unittest.TestCase):
         # directory where the test files are located
         self.path = PATH
         self.path_images = os.path.join(PATH, os.pardir, "images")
+        # some pre-computed ppsd used for plotting tests:
+        # (ppsd._psd_periods was downcast to np.float16 to save space)
+        self.example_ppsd_npz = os.path.join(PATH, "ppsd_kw1_ehz.npz")
+        # ignore some "RuntimeWarning: underflow encountered in multiply"
+        self.nperr = np.geterr()
+        np.seterr(all='ignore')
+
+    def tearDown(self):
+        np.seterr(**self.nperr)
 
     def test_obspy_psd_vs_pitsa(self):
         """
@@ -175,7 +184,7 @@ class PsdTestCase(unittest.TestCase):
         file_mode_mean = os.path.join(
             self.path,
             'BW.KW1._.EHZ.D.2011.090_downsampled__ppsd_mode_mean.npz')
-        tr, paz = _get_sample_data()
+        tr, _paz = _get_sample_data()
         st = Stream([tr])
         ppsd = _get_ppsd()
         # read results and compare
@@ -221,6 +230,39 @@ class PsdTestCase(unittest.TestCase):
                                           binning['spec_bins'])
             np.testing.assert_array_equal(ppsd_loaded.period_bin_centers,
                                           binning['period_bins'])
+
+    def test_ppsd_warnings(self):
+        """
+        Test some warning messages shown by PPSD routine
+        """
+        ppsd = _get_ppsd()
+        # test warning message if SEED ID is mismatched
+        for key in ('network', 'station', 'location', 'channel'):
+            tr, _ = _get_sample_data()
+            # change starttime, data could then be added if ID and sampling
+            # rate match
+            tr.stats.starttime += 24 * 3600
+            tr.stats[key] = 'XX'
+            with warnings.catch_warnings(record=True) as w:
+                warnings.simplefilter('always', UserWarning)
+                self.assertEqual(ppsd.add(tr), False)
+            self.assertEqual(len(w), 1)
+            self.assertEqual(
+                str(w[0].message),
+                'No traces with matching SEED ID in provided stream object.')
+        # test warning message if sampling rate is mismatched
+        tr, _ = _get_sample_data()
+        # change starttime, data could then be added if ID and sampling
+        # rate match
+        tr.stats.starttime += 24 * 3600
+        tr.stats.sampling_rate = 123
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter('always', UserWarning)
+            self.assertEqual(ppsd.add(tr), False)
+        self.assertEqual(len(w), 1)
+        self.assertEqual(
+            str(w[0].message),
+            'No traces with matching sampling rate in provided stream object.')
 
     def test_ppsd_w_iris(self):
         # Bands to be used this is the upper and lower frequency band pairs
@@ -399,7 +441,7 @@ class PsdTestCase(unittest.TestCase):
             self.assertEqual(t_array.shape, (len(ppsd._times_processed),))
             self.assertEqual(t_array.dtype, np.float64)
             np.random.seed(1234)
-            res = np.random.random_integers(0, 1, len(t_array)).astype(np.bool)
+            res = np.random.randint(0, 2, len(t_array)).astype(np.bool)
             return res
 
         # test several different sets of stack criteria, should cover
@@ -549,12 +591,26 @@ class PsdTestCase(unittest.TestCase):
         self.assertIsNotNone(ppsd.current_histogram)
         self.assertIsNotNone(ppsd._current_hist_stack)
         # Adding the same data again does not invalidate the internal stack
-        ppsd.add(st)
+        # but raises "UserWarning: Already covered time spans detected"
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter('always', UserWarning)
+            ppsd.add(st)
+            self.assertEqual(len(w), 4)
+            for w_ in w:
+                self.assertTrue(str(w_.message).startswith(
+                    "Already covered time spans detected"))
         self.assertIsNotNone(ppsd._current_hist_stack)
         # Adding new data invalidates the internal stack
         tr.stats.starttime += 3600
         st2 = Stream([tr])
-        ppsd.add(st2)
+        # raises "UserWarning: Already covered time spans detected"
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter('always', UserWarning)
+            ppsd.add(st2)
+            self.assertEqual(len(w), 2)
+            for w_ in w:
+                self.assertTrue(str(w_.message).startswith(
+                    "Already covered time spans detected"))
         self.assertIsNone(ppsd._current_hist_stack)
         # Accessing current_histogram again calculates the stack
         self.assertIsNotNone(ppsd.current_histogram)
@@ -565,7 +621,7 @@ class PsdTestCase(unittest.TestCase):
         Test that we get the expected warning message on waveform/metadata
         mismatch.
         """
-        tr, paz = _get_sample_data()
+        tr, _paz = _get_sample_data()
         inv = read_inventory(os.path.join(self.path, 'IUANMO.xml'))
         st = Stream([tr])
         ppsd = PPSD(tr.stats, inv)
@@ -582,6 +638,63 @@ class PsdTestCase(unittest.TestCase):
                     "Error getting response from provided metadata"))
         # should not add the data to the ppsd
         self.assertFalse(ret)
+
+    def test_ppsd_psd_values(self):
+        """
+        Test property psd values
+        """
+        ppsd = _get_ppsd()
+        # just test against existing low level data access
+        self.assertEqual(ppsd.psd_values, ppsd._binned_psds)
+        np.testing.assert_array_equal(ppsd.psd_values, ppsd._binned_psds)
+        # property can't be set
+        with self.assertRaises(AttributeError):
+            ppsd.psd_values = 123
+
+    def test_ppsd_temporal_plot(self):
+        """
+        Test plot of several period bins over time
+        """
+        ppsd = PPSD.load_npz(self.example_ppsd_npz)
+
+        restrictions = {'starttime': UTCDateTime(2011, 2, 6, 1, 1),
+                        'endtime': UTCDateTime(2011, 2, 7, 21, 12),
+                        'year': [2011],
+                        'time_of_weekday': [(-1, 2, 23)]}
+
+        # add some gaps in the middle
+        for i in sorted(list(range(30, 40)) + list(range(8, 18)) + [4])[::-1]:
+            ppsd._times_processed.pop(i)
+            ppsd._binned_psds.pop(i)
+
+        with ImageComparison(self.path_images, 'ppsd_temporal.png',
+                             reltol=1.5) as ic:
+            fig = ppsd.plot_temporal([0.1, 1, 10], filename=None, show=False,
+                                     **restrictions)
+            fig.savefig(ic.name)
+        with ImageComparison(self.path_images, 'ppsd_temporal.png',
+                             reltol=1.5) as ic:
+            ppsd.plot_temporal([0.1, 1, 10], filename=ic.name, show=False,
+                               **restrictions)
+
+    def test_ppsd_spectrogram_plot(self):
+        """
+        Test spectrogram type plot of PPSD
+        """
+        ppsd = PPSD.load_npz(self.example_ppsd_npz)
+
+        # add some gaps in the middle
+        for i in sorted(list(range(30, 40)) + list(range(8, 18)) + [4])[::-1]:
+            ppsd._times_processed.pop(i)
+            ppsd._binned_psds.pop(i)
+
+        with ImageComparison(self.path_images, 'ppsd_spectrogram.png',
+                             reltol=1.5) as ic:
+            fig = ppsd.plot_spectrogram(filename=None, show=False)
+            fig.savefig(ic.name)
+        with ImageComparison(self.path_images, 'ppsd_spectrogram.png',
+                             reltol=1.5) as ic:
+            ppsd.plot_spectrogram(filename=ic.name, show=False)
 
 
 def suite():

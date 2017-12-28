@@ -17,15 +17,15 @@ from future.utils import python_2_unicode_compatible, native_str
 import copy
 import fnmatch
 import os
-from pkg_resources import load_entry_point
 import textwrap
 import warnings
 
 import obspy
 from obspy.core.util.base import (ENTRY_POINTS, ComparingObject,
                                   _read_from_plugin, NamedTemporaryFile,
-                                  download_to_file)
+                                  download_to_file, sanitize_filename)
 from obspy.core.util.decorator import map_example_filename
+from obspy.core.util.misc import buffered_load_entry_point
 from obspy.core.util.obspy_types import ObsPyException, ZeroSamplingRate
 
 from .network import Network
@@ -47,15 +47,34 @@ def _create_example_inventory():
 
 
 @map_example_filename("path_or_file_object")
-def read_inventory(path_or_file_object=None, format=None):
+def read_inventory(path_or_file_object=None, format=None, *args, **kwargs):
     """
     Function to read inventory files.
 
     :param path_or_file_object: File name or file like object. If this
         attribute is omitted, an example :class:`Inventory`
         object will be returned.
-    :type format: str, optional
-    :param format: Format of the file to read (e.g. ``"STATIONXML"``).
+    :type format: str
+    :param format: Format of the file to read (e.g. ``"STATIONXML"``). See the
+        `Supported Formats`_ section below for a list of supported formats.
+    :rtype: :class:`~obspy.core.inventory.inventory.Inventory`
+    :return: An ObsPy :class:`~obspy.core.inventory.inventory.Inventory`
+        object.
+
+    Additional args and kwargs are passed on to the underlying ``_read_X()``
+    methods of the inventory plugins.
+
+    .. rubric:: _`Supported Formats`
+
+    Additional ObsPy modules extend the functionality of the
+    :func:`~obspy.core.inventory.inventory.read_inventory` function. The
+    following table summarizes all known file formats currently supported by
+    ObsPy.
+
+    Please refer to the `Linked Function Call`_ of each module for any extra
+    options available at the import stage.
+
+    %s
 
     .. note::
 
@@ -72,11 +91,11 @@ def read_inventory(path_or_file_object=None, format=None):
         # extract extension if any
         suffix = \
             os.path.basename(path_or_file_object).partition('.')[2] or '.tmp'
-        with NamedTemporaryFile(suffix=suffix) as fh:
+        with NamedTemporaryFile(suffix=sanitize_filename(suffix)) as fh:
             download_to_file(url=path_or_file_object, filename_or_buffer=fh)
             return read_inventory(fh.name, format=format)
     return _read_from_plugin("inventory", path_or_file_object,
-                             format=format)[0]
+                             format=format, *args, **kwargs)[0]
 
 
 @python_2_unicode_compatible
@@ -260,20 +279,44 @@ class Inventory(ComparingObject):
 
         :param path_or_file_object: File name or file-like object to be written
             to.
-        :param format: The format of the written file.
+        :type format: str
+        :param format: The file format to use (e.g. ``"STATIONXML"``). See the
+            `Supported Formats`_ section below for a list of supported formats.
+        :param kwargs: Additional keyword arguments passed to the underlying
+            plugin's writer method.
+
+        .. rubric:: Example
+
+        >>> from obspy import read_inventory
+        >>> inventory = read_inventory()
+        >>> inventory.write("example.xml",
+        ...                 format="STATIONXML")  # doctest: +SKIP
+
+        .. rubric:: _`Supported Formats`
+
+        Additional ObsPy modules extend the parameters of the
+        :meth:`~obspy.core.inventory.inventory.Inventory.write()` method. The
+        following table summarizes all known formats with write capability
+        currently available for ObsPy.
+
+        Please refer to the `Linked Function Call`_ of each module for any
+        extra options available.
+
+        %s
         """
         format = format.upper()
         try:
             # get format specific entry point
             format_ep = ENTRY_POINTS['inventory_write'][format]
             # search writeFormat method for given entry point
-            write_format = load_entry_point(
+            write_format = buffered_load_entry_point(
                 format_ep.dist.key,
                 'obspy.plugin.inventory.%s' % (format_ep.name), 'writeFormat')
         except (IndexError, ImportError, KeyError):
-            msg = "Writing format \"%s\" is not supported. Supported types: %s"
-            raise TypeError(msg % (format,
-                                   ', '.join(ENTRY_POINTS['inventory_write'])))
+            msg = "Writing format '{}' is not supported. Supported types: {}"
+            msg = msg.format(format,
+                             ', '.join(ENTRY_POINTS['inventory_write']))
+            raise ValueError(msg)
         return write_format(self, path_or_file_object, **kwargs)
 
     @property
@@ -332,9 +375,49 @@ class Inventory(ComparingObject):
             raise Exception(msg)
         return responses[0]
 
+    def get_channel_metadata(self, seed_id, datetime=None):
+        """
+        Return basic metadata for a given channel.
+
+        :type seed_id: str
+        :param seed_id: SEED ID string of channel to get metadata for.
+        :type datetime: :class:`~obspy.core.utcdatetime.UTCDateTime`, optional
+        :param datetime: Time to get metadata for.
+        :rtype: dict
+        :return: Dictionary containing coordinates and orientation (latitude,
+            longitude, elevation, azimuth, dip)
+        """
+        network, _, _, _ = seed_id.split(".")
+
+        metadata = []
+        for net in self.networks:
+            if net.code != network:
+                continue
+            try:
+                metadata.append(net.get_channel_metadata(seed_id, datetime))
+            except Exception:
+                pass
+        if len(metadata) > 1:
+            msg = ("Found more than one matching channel metadata. "
+                   "Returning first.")
+            warnings.warn(msg)
+        elif len(metadata) < 1:
+            msg = "No matching channel metadata found."
+            raise Exception(msg)
+        return metadata[0]
+
     def get_coordinates(self, seed_id, datetime=None):
         """
         Return coordinates for a given channel.
+
+        >>> from obspy import read_inventory, UTCDateTime
+        >>> inv = read_inventory()
+        >>> t = UTCDateTime("2015-01-01")
+        >>> inv.get_coordinates("GR.FUR..LHE", t)  # doctest: +SKIP
+        {'elevation': 565.0,
+         'latitude': 48.162899,
+         'local_depth': 0.0,
+         'longitude': 11.2752}
 
         :type seed_id: str
         :param seed_id: SEED ID string of channel to get coordinates for.
@@ -342,25 +425,37 @@ class Inventory(ComparingObject):
         :param datetime: Time to get coordinates for.
         :rtype: dict
         :return: Dictionary containing coordinates (latitude, longitude,
-            elevation)
+            elevation, local_depth)
         """
-        network, _, _, _ = seed_id.split(".")
+        metadata = self.get_channel_metadata(seed_id, datetime)
+        coordinates = {}
+        for key in ['latitude', 'longitude', 'elevation', 'local_depth']:
+            coordinates[key] = metadata[key]
+        return coordinates
 
-        coordinates = []
-        for net in self.networks:
-            if net.code != network:
-                continue
-            try:
-                coordinates.append(net.get_coordinates(seed_id, datetime))
-            except Exception:
-                pass
-        if len(coordinates) > 1:
-            msg = "Found more than one matching coordinates. Returning first."
-            warnings.warn(msg)
-        elif len(coordinates) < 1:
-            msg = "No matching coordinates found."
-            raise Exception(msg)
-        return coordinates[0]
+    def get_orientation(self, seed_id, datetime=None):
+        """
+        Return orientation for a given channel.
+
+        >>> from obspy import read_inventory, UTCDateTime
+        >>> inv = read_inventory()
+        >>> t = UTCDateTime("2015-01-01")
+        >>> inv.get_orientation("GR.FUR..LHE", t)  # doctest: +SKIP
+        {'azimuth': 90.0,
+         'dip': 0.0}
+
+        :type seed_id: str
+        :param seed_id: SEED ID string of channel to get orientation for.
+        :type datetime: :class:`~obspy.core.utcdatetime.UTCDateTime`, optional
+        :param datetime: Time to get orientation for.
+        :rtype: dict
+        :return: Dictionary containing orientation (azimuth, dip).
+        """
+        metadata = self.get_channel_metadata(seed_id, datetime)
+        orientation = {}
+        for key in ['azimuth', 'dip']:
+            orientation[key] = metadata[key]
+        return orientation
 
     def select(self, network=None, station=None, location=None, channel=None,
                time=None, starttime=None, endtime=None, sampling_rate=None,
@@ -680,8 +775,8 @@ class Inventory(ComparingObject):
 
     def plot_response(self, min_freq, output="VEL", network="*", station="*",
                       location="*", channel="*", time=None, starttime=None,
-                      endtime=None, axes=None, unwrap_phase=False, show=True,
-                      outfile=None):
+                      endtime=None, axes=None, unwrap_phase=False,
+                      plot_degrees=False, show=True, outfile=None):
         """
         Show bode plot of instrument response of all (or a subset of) the
         inventory's channels.
@@ -728,6 +823,8 @@ class Inventory(ComparingObject):
             opened.
         :type unwrap_phase: bool
         :param unwrap_phase: Set optional phase unwrapping using NumPy.
+        :type plot_degrees: bool
+        :param plot_degrees: if ``True`` plot bode in degrees
         :type show: bool
         :param show: Whether to show the figure after plotting or not. Can be
             used to do further customization of the plot before showing it.
@@ -773,7 +870,8 @@ class Inventory(ComparingObject):
                                  axes=(ax1, ax2),
                                  label=".".join((net.code, sta.code,
                                                  cha.location_code, cha.code)),
-                                 unwrap_phase=unwrap_phase, show=False,
+                                 unwrap_phase=unwrap_phase,
+                                 plot_degrees=plot_degrees, show=False,
                                  outfile=None)
                     except ZeroSamplingRate:
                         msg = ("Skipping plot of channel with zero "
@@ -782,12 +880,10 @@ class Inventory(ComparingObject):
                     except ObsPyException as e:
                         msg = "Skipping plot of channel (%s):\n%s"
                         warnings.warn(msg % (str(e), str(cha)), UserWarning)
-
         # final adjustments to plot if we created the figure in here
         if not axes:
             from obspy.core.inventory.response import _adjust_bode_plot_figure
-            _adjust_bode_plot_figure(fig, show=False)
-
+            _adjust_bode_plot_figure(fig, plot_degrees, show=False)
         if outfile:
             fig.savefig(outfile)
         else:

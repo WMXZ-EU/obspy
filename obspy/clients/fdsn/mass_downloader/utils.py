@@ -12,18 +12,21 @@ Utility functions required for the download helpers.
 from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
 from future.builtins import *  # NOQA
-from future import standard_library
-with standard_library.hooks():
-    import itertools
-    from urllib.error import HTTPError, URLError
 
 import collections
 import fnmatch
+import itertools
 import os
+import sys
 from lxml import etree
 import numpy as np
 from scipy.spatial import cKDTree
 from socket import timeout as socket_timeout
+
+if sys.version_info.major == 2:
+    from urllib2 import HTTPError, URLError
+else:
+    from urllib.error import HTTPError, URLError
 
 import obspy
 from obspy.core.util.base import NamedTemporaryFile
@@ -372,9 +375,14 @@ def get_stationxml_contents(filename):
     channel_tag = "{%s}Channel" % ns
     response_tag = "{%s}Response" % ns
 
-    context = etree.iterparse(filename, events=("start", ),
-                              tag=(network_tag, station_tag, channel_tag,
-                                   response_tag))
+    try:
+        context = etree.iterparse(filename, events=("start", ),
+                                  tag=(network_tag, station_tag, channel_tag,
+                                       response_tag))
+    except TypeError:  # pragma: no cover
+        # Some old lxml version have a way less powerful iterparse()
+        # function. Fall back to parsing with ObsPy.
+        return _get_stationxml_contents_slow(filename)
 
     channels = []
     for event, elem in context:
@@ -402,6 +410,28 @@ def get_stationxml_contents(filename):
         while elem.getprevious() is not None:
             del elem.getparent()[0]
 
+    return channels
+
+
+def _get_stationxml_contents_slow(filename):
+    """
+    Slow variant for get_stationxml_contents() for old lxml versions.
+
+    :param filename: The path to the file.
+    :returns: list of ChannelAvailability objects.
+    """
+    channels = []
+    inv = obspy.read_inventory(filename)
+    for net in inv:
+        for sta in net:
+            for cha in sta:
+                if not cha.response:
+                    continue
+                channels.append(ChannelAvailability(
+                    net.code, sta.code, cha.location_code, cha.code,
+                    cha.start_date, cha.end_date
+                    if cha.end_date else obspy.UTCDateTime(2599, 1, 1),
+                    filename))
     return channels
 
 

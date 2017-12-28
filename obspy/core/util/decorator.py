@@ -11,7 +11,6 @@ Decorator used in ObsPy.
 from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
 from future.builtins import *  # NOQA
-from future.utils import PY2, native_str
 
 import functools
 import inspect
@@ -25,7 +24,8 @@ import warnings
 import zipfile
 
 import numpy as np
-from decorator import decorator, decorate
+from decorator import decorator
+from future.utils import PY2, native_str
 
 from obspy.core.util import get_example_file
 from obspy.core.util.base import NamedTemporaryFile
@@ -145,6 +145,8 @@ def uncompress_file(func, filename, *args, **kwargs):
     """
     Decorator used for temporary uncompressing file if .gz or .bz2 archive.
     """
+    if not kwargs.get('check_compression', True):
+        return func(filename, *args, **kwargs)
     if not isinstance(filename, (str, native_str)):
         return func(filename, *args, **kwargs)
     elif not os.path.exists(filename):
@@ -300,20 +302,38 @@ def map_example_filename(arg_kwarg_name):
     return _map_example_filename
 
 
+def _decorate_polyfill(func, caller):
+    """
+    decorate(func, caller) decorates a function using a caller.
+    """
+    try:
+        from decorator import decorate
+        return decorate(func, caller)
+    except ImportError:
+        from decorator import FunctionMaker
+        evaldict = dict(_call_=caller, _func_=func)
+        fun = FunctionMaker.create(
+            func, "return _call_(_func_, %(shortsignature)s)",
+            evaldict, __wrapped__=func)
+        if hasattr(func, '__qualname__'):
+            fun.__qualname__ = func.__qualname__
+        return fun
+
+
 def rlock(func):
-        """
-        Place a threading recursive lock (Rlock) on the wrapped function
-        """
-        # This lock will be instantiated at function creation time, i.e. at the
-        # time the Python interpreter sees the decorated function the very
-        # first time - this lock thus exists once for each decorated function.
-        _rlock = threading.RLock()
+    """
+    Place a threading recursive lock (Rlock) on the wrapped function.
+    """
+    # This lock will be instantiated at function creation time, i.e. at the
+    # time the Python interpreter sees the decorated function the very
+    # first time - this lock thus exists once for each decorated function.
+    _rlock = threading.RLock()
 
-        def _locked_f(f, *args, **kwargs):
-            with _rlock:
-                return func(*args, **kwargs)
+    def _locked_f(f, *args, **kwargs):
+        with _rlock:
+            return func(*args, **kwargs)
 
-        return decorate(func, _locked_f)
+    return _decorate_polyfill(func, _locked_f)
 
 
 if __name__ == '__main__':

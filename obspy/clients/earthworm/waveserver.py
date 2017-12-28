@@ -137,10 +137,19 @@ def send_sock_req(server, port, req_str, timeout=None):
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.settimeout(timeout)
     s.connect((server, port))
-    if req_str[-1:] == b'\n':
-        s.send(req_str)
-    else:
-        s.send(req_str + b'\n')
+
+    full_req = req_str
+    if not full_req.endswith(b'\n'):
+        full_req += b'\n'
+
+    req_len = len(full_req)
+    totalsent = 0
+
+    while totalsent < req_len:
+        sent = s.send(full_req[totalsent:])
+        if sent == 0:
+            raise RuntimeError("socket connection broken")
+        totalsent = totalsent + sent
     return s
 
 
@@ -230,7 +239,7 @@ def get_menu(server, port, scnl=None, timeout=None):
             return []
         outlist = []
         for p in range(0, len(tokens), elen):
-            l = tokens[p:p + elen]
+            l = tokens[p:p + elen]  # NOQA
             if elen == 8:
                 outlist.append((int(l[0]), l[1], l[2], l[3], l[4],
                                 float(l[5]), float(l[6]), l[7]))
@@ -241,7 +250,8 @@ def get_menu(server, port, scnl=None, timeout=None):
     return []
 
 
-def read_wave_server_v(server, port, scnl, start, end, timeout=None):
+def read_wave_server_v(server, port, scnl, start, end, timeout=None,
+                       cleanup=False):
     """
     Reads data for specified time interval and scnl on specified waveserverV.
 
@@ -264,16 +274,57 @@ def read_wave_server_v(server, port, scnl, start, end, timeout=None):
     nbytes = int(tokens[-1])
     dat = get_sock_bytes(sock, nbytes, timeout=timeout)
     sock.close()
+
     tbl = []
-    new = TraceBuf2()  # empty..filled below
     bytesread = 1
     p = 0
-    while bytesread and p < len(dat):
-        bytesread = new.read_tb2(dat[p:])
-        if bytesread:
-            tbl.append(new)
-            new = TraceBuf2()  # empty..filled on next iteration
-            p += bytesread
+    dat_len = len(dat)
+    current_tb = None
+    period = None
+    bufs = None
+
+    while bytesread and p < dat_len:
+        if not dat_len > p + 64:
+            break  # no tracebufs left
+
+        new_tb = TraceBuf2()
+        new_tb.parse_header(dat[p:p + 64])
+        p += 64
+        nbytes = new_tb.ndata * new_tb.inputType.itemsize
+
+        if dat_len < p + nbytes:
+            break   # not enough array to hold data specified in header
+
+        if current_tb is not None:
+            if cleanup and new_tb.start - current_tb.end == period:
+                buf = dat[p:p + nbytes]
+                bufs.append(np.fromstring(buf, current_tb.inputType))
+                current_tb.end = new_tb.end
+
+            else:
+                if len(bufs) > 1:
+                    current_tb.data = np.concatenate(bufs)
+                else:
+                    current_tb.data = bufs[0]
+
+                current_tb.ndata = len(current_tb.data)
+                current_tb = None
+
+        if current_tb is None:
+            current_tb = new_tb
+            tbl.append(current_tb)
+            period = 1 / current_tb.rate
+            bufs = [np.fromstring(dat[p:p + nbytes], current_tb.inputType)]
+
+        p += nbytes
+
+    if len(bufs) > 1:
+        current_tb.data = np.concatenate(bufs)
+    else:
+        current_tb.data = bufs[0]
+
+    current_tb.ndata = len(current_tb.data)
+
     return tbl
 
 

@@ -27,14 +27,15 @@ import numpy as np
 
 import obspy
 from obspy.core.compatibility import mock
-from obspy.core.util.base import NamedTemporaryFile
+from obspy.core.util.base import NamedTemporaryFile, SCIPY_VERSION
 from obspy.clients.fdsn import Client
 from obspy.clients.fdsn.mass_downloader import (domain, Restrictions,
                                                 MassDownloader)
 from obspy.clients.fdsn.mass_downloader.utils import (
     filter_channel_priority, get_stationxml_filename, get_mseed_filename,
     get_stationxml_contents, SphericalNearestNeighbour, safe_delete,
-    download_stationxml, download_and_split_mseed_bulk)
+    download_stationxml, download_and_split_mseed_bulk,
+    _get_stationxml_contents_slow)
 from obspy.clients.fdsn.mass_downloader.download_helpers import (
     Channel, TimeInterval, Station, STATUS, ClientDownloadHelper)
 
@@ -414,6 +415,8 @@ class DownloadHelpersUtilTestCase(unittest.TestCase):
             channels, key="location", priorities=None)
         self.assertEqual(filtered_channels, channels)
 
+    @unittest.skipIf(SCIPY_VERSION < [0, 12],
+                     'scipy version 0.12 or higher needed.')
     def test_spherical_nearest_neighbour(self):
         """
         Tests the spherical kd-tree.
@@ -1005,6 +1008,17 @@ class DownloadHelpersUtilTestCase(unittest.TestCase):
                                  cha.code, cha.start_date, cha.end_date,
                                  filename)])
 
+    def test_fast_vs_slow_get_stationxml_contents(self):
+        """
+        Both should of course return the same result.
+
+        For some old lxml versions both will be using the same function,
+        but this is still a useful test.
+        """
+        filename = os.path.join(self.data, "AU.MEEK.xml")
+        self.assertEqual(get_stationxml_contents(filename),
+                         _get_stationxml_contents_slow(filename))
+
     def test_channel_str_representation(self):
         """
         Test the string representations of channel objects.
@@ -1253,7 +1267,9 @@ class StationTestCase(unittest.TestCase):
 
         with mock.patch("obspy.clients.fdsn.mass_downloader"
                         ".utils.safe_delete") as p1, \
-                mock.patch("obspy.io.mseed.util.get_start_and_end_time") as p2:
+                mock.patch("obspy.io.mseed.util.get_start_and_end_time") \
+                as p2, \
+                mock.patch("os.path.isfile") as p_isfile:  # NOQA
             p2.return_value = (obspy.UTCDateTime(1), obspy.UTCDateTime(2))
             # By default, nothing will happen.
             station.sanitize_downloads(logger)
@@ -1812,6 +1828,8 @@ class ClientDownloadHelperTestCase(unittest.TestCase):
             "Station "
         ))
 
+    @unittest.skipIf(SCIPY_VERSION < [0, 12],
+                     'scipy version 0.12 or higher needed.')
     def test_station_list_nearest_neighbour_filter(self):
         """
         Test the filtering based on geographical distance.
@@ -2573,6 +2591,8 @@ class DownloadHelperTestCase(unittest.TestCase):
     @mock.patch("os.makedirs")
     @mock.patch("logging.Logger.info")
     @mock.patch("logging.Logger.warning")
+    @unittest.skipIf(SCIPY_VERSION < [0, 12],
+                     'scipy version 0.12 or higher needed.')
     def test_download_method(self, _log_w, _log_p, _patch_makedirs,
                              patch_dl_mseed, patch_dl_stationxml,
                              patch_get_avail, patch_discover):

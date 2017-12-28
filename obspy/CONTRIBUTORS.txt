@@ -38,11 +38,14 @@ Kremers, Simon
 Kress, Victor
 Krieger, Lars
 Krischer, Lion
+Kula, Damian
 Käufl, Paul
 Köhler, Andreas
 Lecocq, Thomas
 Leeman, John
+Legovini, Paride
 Lesage, Philippe
+Li, Yulin
 Lomax, Anthony
 Lopes, Rui L.
 MacCarthy, Jonathan
@@ -56,6 +59,7 @@ Morgenstern, Bernhard
 Nof, Ran Novitsky
 Panning, Mark P.
 Rapagnani, Giovanni
+Parker, Tom
 Reyes, Celso
 Ringler, Adam
 Rothenhäusler, Nicolas
@@ -64,16 +68,22 @@ Sales de Andrade, Elliott
 Satriano, Claudio
 Saul, Joachim
 Scheingraber, Chris
+Schneider, Simon
 Sippl, Christian
 Snoke, Arthur
+Stähler, Simon C.
 Stange, Stefan
 Sullivan, Benjamin
 Tian, Dongdong
 Trabant, Chad
+Trani, Luca
 Uieda, Leonardo
 Walker, Andrew
 Walther, Marcus
 Wassermann, Joachim
+van Wijk, Kasper
 Williams, Mark C.
 Winkelman, Andrew
+Zaccarelli, Riccardo
 Zad, Seyed Kasra Hosseini
+Zhu, Lijun
